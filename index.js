@@ -10,7 +10,7 @@ const settings = {
     minuteInterval: 63 * 1000,
     boxInterval: 3 * 60 * 1000
 };
-
+ 
 const MY_INFO = {
     keyword: "🐈‍⬛",  
     ownerId: "2481425"  
