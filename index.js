@@ -15,7 +15,11 @@ const MY_INFO = {
 
 const service = new WOLF();
 
-// --- قسم استقبال الرسائل (الاستجابة للفخاخ) ---
+// دالة مساعدة لتجهيز الرموز (Escape) كي لا تسبب مشاكل في Regex
+const escapeRegExp = (string) => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
 service.on('groupMessage', async (message) => {
     try {
         const content = message.body;
@@ -24,52 +28,60 @@ service.on('groupMessage', async (message) => {
         const isTargetGroup = message.targetGroupId === settings.taskGroupId || message.targetGroupId === settings.depositGroupId;
         if (!isTargetGroup) return;
 
-        // التحقق من الفخ وتطابق العضوية
+        // التحقق من أن الرسالة فخ + مطابقة العضوية
         if (content.includes("اختبار تحقق سريع للاعب") && content.includes(MY_INFO.myId)) {
             
-            // استخراج الرموز ديناميكياً
-            const symbolMatch = content.match(/بين العلامتين\s*([^\s])\s*و?\s*([^\s])/u);
+            // 1. استخراج العلامات (الرموز) من نص السؤال
+            // يبحث عن نمط "بين العلامتين [رمز] و [رمز]" أو "الواقع بين العلامتين [رمز] و [رمز]"
+            const symbolMatch = content.match(/(?:بين|الواقع بين) العلامتين\s*([^\s])\s*و?\s*([^\s])/u);
 
             if (symbolMatch) {
-                const sym1 = symbolMatch[1];
-                const sym2 = symbolMatch[2];
-                const escape = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                
-                const pattern = new RegExp(`${escape(sym1)}(.*?)${escape(sym2)}`, 'u');
-                const result = content.match(pattern);
+                const sym1 = symbolMatch[1]; // الرمز الأول
+                const sym2 = symbolMatch[2]; // الرمز الثاني
+
+                // 2. التركيز فقط على السطر (أو الجزء) الذي بعد النقطتين (:)
+                const parts = content.split(':');
+                const targetLine = parts.pop().trim(); // نأخذ آخر جزء بعد النقطتين
+
+                // 3. البحث عما يقع بين الرموز المستخرجة داخل هذا الجزء
+                const pattern = new RegExp(`${escapeRegExp(sym1)}(.*?)${escapeRegExp(sym2)}`, 'u');
+                const result = targetLine.match(pattern);
 
                 if (result && result[1]) {
                     const answer = result[1].trim();
+                    
+                    console.log(`تم استخراج الرمز بنجاح: ${answer}`);
+                    
+                    // إرسال الإجابة
                     setTimeout(async () => {
                         await service.messaging.sendGroupMessage(message.targetGroupId, `#${answer}`);
                     }, 3000);
                 }
             }
         }
-    } catch (err) {}
+    } catch (err) {
+        console.error("خطأ في معالجة الفخ:", err);
+    }
 });
 
-// --- قسم المهام الدورية ---
+// --- قسم المهام الدورية (كما طلبت) ---
 service.on('ready', async () => {
-    console.log(`🚀 البوت يعمل: المهام الدورية مفعلة ونظام الفخاخ الذكي نشط.`);
+    console.log(`🚀 البوت يعمل: نظام استخراج الرموز الذكي نشط.`);
     
     try {
         await service.group.joinById(settings.taskGroupId);
         await service.group.joinById(settings.depositGroupId);
 
-        // 1. المهام الدورية (كل دقيقة)
         setInterval(async () => {
             await service.messaging.sendGroupMessage(settings.taskGroupId, "!مد مهام");
-            // تأخير بسيط 2 ثانية بين الرسالتين لضمان عدم حظر البوت
             setTimeout(async () => {
                 await service.messaging.sendGroupMessage(settings.depositGroupId, "!مد تحالف ايداع كل");
             }, 2000);
-        }, 60000); // 60,000 مللي ثانية = دقيقة
+        }, 60000); 
 
-        // 2. فتح الصناديق (كل 3 دقائق)
         setInterval(async () => {
             await service.messaging.sendGroupMessage(settings.taskGroupId, "!مد صندوق فتح");
-        }, 180000); // 180,000 مللي ثانية = 3 دقائق
+        }, 180000); 
 
     } catch (e) {
         console.error("خطأ في بدء المهام:", e);
