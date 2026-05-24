@@ -5,82 +5,68 @@ import axios from 'axios';
 const { WOLF } = wolfjs;
 const service = new WOLF();
 
-// الإعدادات
 const settings = {
-    identity: process.env.U_MAIL || 'ايميلك',
-    secret: process.env.U_PASS || 'كلمة_السر',
-    taskGroupId: 81889058,       // قناة المهام
-    depositGroupId: 81889058,    // قناة الإيداع
-    verificationGroupId: 9969,   // القناة التي يرسل فيها البوت الحل
-    apiKey: 'K83171079488957',   // مفتاح الـ API الخاص بك
-    minuteInterval: 60 * 1000 
+    taskGroupId: 81889058,
+    verificationGroupId: 9969,
+    minuteInterval: 60 * 1000
 };
 
-// دالة الحل عبر API
+// دالة الحل عبر API OCR.space
 async function solveCaptcha(imageUrl) {
     try {
         console.log("جاري إرسال الصورة للتحليل...");
         const response = await axios.post('https://api.ocr.space/parse/image', null, {
             params: {
-                apikey: settings.apiKey,
+                apikey: process.env.API_KEY,
                 url: imageUrl,
                 language: 'eng',
                 OCREngine: 2
             }
         });
 
-        const result = response.data;
-        if (result.ParsedResults && result.ParsedResults.length > 0) {
-            return result.ParsedResults[0].ParsedText.trim();
+        if (response.data.ParsedResults && response.data.ParsedResults.length > 0) {
+            return response.data.ParsedResults[0].ParsedText.trim();
         }
         return null;
     } catch (err) {
-        console.error("خطأ في الاتصال بـ API:", err);
+        console.error("خطأ في الاتصال بـ API:", err.message);
         return null;
     }
 }
 
-// دالة المهام الدورية
-const sendRoutineCommands = async () => {
-    try {
-        await service.messaging.sendGroupMessage(settings.taskGroupId, "!مد مهام");
-        setTimeout(async () => {
-            await service.messaging.sendGroupMessage(settings.depositGroupId, "!مد تحالف ايداع كل");
-        }, 3000);
-    } catch (e) {}
-};
-
-// مراقبة الرسائل
+// مراقبة الرسائل لاكتشاف الصور
 service.on('groupMessage', async (message) => {
-    if (message.targetGroupId !== settings.taskGroupId) return;
-
-    // 1. التعامل مع الكابتشا (اختبار تحقق بشري)
-    if (message.body.includes("اختبار تحقق بشري")) {
-        // البحث عن رابط الصورة في المرفقات (Attachments)
-        const attachment = message.attachments ? message.attachments[0] : null;
+    // التحقق من وجود مرفقات (صور)
+    if (message.attachments && message.attachments.length > 0) {
+        const imageUrl = message.attachments[0].link; // رابط الصورة
         
-        if (attachment && attachment.link) {
-            console.log("تم اكتشاف صورة كابتشا، جاري الحل...");
-            const solution = await solveCaptcha(attachment.link);
-            
-            if (solution) {
-                console.log(`تم الحل: ${solution}`);
+        console.log("تم اكتشاف صورة في القناة، جاري المعالجة...");
+        
+        const solution = await solveCaptcha(imageUrl);
+        
+        if (solution) {
+            console.log(`تم استخراج الرمز: ${solution}`);
+            // إرسال الحل
+            setTimeout(async () => {
                 await service.messaging.sendGroupMessage(settings.verificationGroupId, `#${solution}`);
-            } else {
-                console.log("فشل البوت في استخراج النص من الصورة.");
-            }
+            }, 2000); 
         }
     }
 });
 
-// تشغيل البوت
+// المهام الدورية
+const runTasks = async () => {
+    try {
+        await service.messaging.sendGroupMessage(settings.taskGroupId, "!مد مهام");
+        setTimeout(async () => {
+            await service.messaging.sendGroupMessage(settings.taskGroupId, "!مد تحالف ايداع كل");
+        }, 3000);
+    } catch (e) {}
+};
+
 service.on('ready', async () => {
-    console.log("🚀 البوت يعمل الآن ويراقب القناة...");
-    await service.group.joinById(settings.taskGroupId);
-    
-    // تشغيل المهام فوراً ثم كل دقيقة
-    sendRoutineCommands();
-    setInterval(sendRoutineCommands, settings.minuteInterval);
+    console.log("✅ البوت متصل ويراقب الصور...");
+    setInterval(runTasks, settings.minuteInterval);
 });
 
-service.login(settings.identity, settings.secret);
+service.login(process.env.U_MAIL, process.env.U_PASS);
