@@ -5,9 +5,9 @@ import axios from 'axios';
 const { WOLF } = wolfjs;
 const service = new WOLF();
 
-// الإعدادات - تأكد من مراجعة أرقام القنوات
+// الإعدادات - تأكد من مراجعة أرقام القنوات هنا
 const settings = {
-    allowedGroupIds: [81889058], // أضف هنا جميع القنوات التي تريد مراقبتها
+    allowedGroupIds: [ 81889058], // أضف هنا جميع القنوات التي تريد مراقبتها
     verificationGroupId: 9969,          // القناة التي سيرسل فيها الحل
     apiKey: process.env.API_KEY || 'K83171079488957'
 };
@@ -22,7 +22,7 @@ async function solveCaptcha(imageUrl) {
                 url: imageUrl, 
                 language: 'eng', 
                 OCREngine: 2,
-                filetype: 'JPG' // هذا هو الحل لمشكلة E216
+                filetype: 'JPG' // هذا السطر هو الحل لمشكلة E216
             },
             timeout: 15000 
         });
@@ -43,7 +43,7 @@ async function solveCaptcha(imageUrl) {
 
 // مراقبة الرسائل
 service.on('groupMessage', async (message) => {
-    // 1. تصفية القنوات
+    // 1. تصفية القنوات: إذا لم تكن القناة في القائمة، تجاهل الرسالة
     if (!settings.allowedGroupIds.includes(message.targetGroupId)) return;
 
     // 2. استخراج رابط الصورة
