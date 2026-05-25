@@ -6,76 +6,82 @@ import { createWorker } from 'tesseract.js';
 const { WOLF } = wolfjs;
 const client = new WOLF();
 
+// المعرفات المحددة
 const TARGET_USER_ID = 51660277;
 const CHANNEL_ID = 81889058;
+const INTERVAL_MS = 63000;
 
 client.on('ready', async () => {
-    console.log("🚀 البوت متصل ومفعل في القناة " + CHANNEL_ID);
+    console.log("🚀 البوت متصل! سيتجاهل أي صورة تحتوي على كلمات (مهمة/سرقة).");
     await client.group.joinById(CHANNEL_ID);
+    startAutomation();
 });
 
-client.on('groupMessage', async (message) => {
-    // 1. فحص الهوية (للتأكد أن البوت يرى الرسالة)
-    if (message.targetGroupId != CHANNEL_ID) return;
-    
-    // طباعة أي رسالة تأتي من المستخدم المستهدف (سواء نص أو صورة)
-    if (message.sourceSubscriberId == TARGET_USER_ID) {
-        console.log(`📩 رسالة من المستخدم المستهدف. النوع: ${message.type}`);
-
-        // إذا كانت صورة
-        if (message.type === 'text/image_link') {
-            const imageUrl = message.body;
-            console.log("🖼️ تم اكتشاف رابط صورة: " + imageUrl);
-
-            try {
-                // محاولة المعالجة
-                const response = await fetch(imageUrl);
-                const buffer = Buffer.from(await response.arrayBuffer());
-                
-                console.log("🔍 جاري فحص محتوى الصورة...");
-                
-                // فحص هل هي كابتشا
-                const isCaptcha = await checkCaptchaContent(buffer);
-                
-                if (isCaptcha) {
-                    console.log("✅ الصورة كابتشا! جاري الحل...");
-                    const code = await solveCaptcha(buffer);
-                    console.log("🔑 الحل المستخرج: " + code);
-                    await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
-                } else {
-                    console.log("⏭️ تم تجاهل الصورة لأنها لا تحتوي على نص 'اختبار' أو 'تحقق'");
-                }
-            } catch (err) {
-                console.error("❌ خطأ أثناء المعالجة: " + err.message);
-            }
+async function startAutomation() {
+    setInterval(async () => {
+        try {
+            await client.messaging.sendGroupMessage(CHANNEL_ID, '!مد مهام');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            await client.messaging.sendGroupMessage(CHANNEL_ID, '!مد تحالف ايداع كل');
+        } catch (err) {
+            console.error("❌ خطأ في الأتمتة:", err.message);
         }
-    }
-});
+    }, INTERVAL_MS);
+}
 
-async function checkCaptchaContent(buffer) {
+// دالة الفلتر (القائمة السوداء)
+async function isTrashImage(buffer) {
     try {
-        const header = await sharp(buffer)
-            .extract({ left: 0, top: 0, width: 800, height: 300 })
-            .greyscale()
-            .threshold(128)
-            .toBuffer();
-
         const worker = await createWorker('ara');
-        const { data: { text } } = await worker.recognize(header);
+        // قراءة كامل النص في الصورة
+        const { data: { text } } = await worker.recognize(buffer);
         await worker.terminate();
 
-        console.log("📝 النص المقروء من الصورة: [" + text.trim() + "]");
-
-        const cleanText = text.replace(/\s/g, '');
-        return cleanText.includes('اختبار') || cleanText.includes('تحقق');
+        const cleanText = text.replace(/\s+/g, ''); // إزالة المسافات
+        
+        // إذا وجد البوت هذه الكلمات، فهي صورة غير مرغوبة
+        if (cleanText.includes('مهمةمكتملة') || cleanText.includes('عمليةسرقة') || cleanText.includes('ناجحة')) {
+            return true;
+        }
+        return false;
     } catch (e) {
-        console.error("⚠️ خطأ في قراءة النص: " + e.message);
         return false;
     }
 }
 
-// دالة الحل التي كانت تعمل معك سابقاً
+client.on('groupMessage', async (message) => {
+    if (message.targetGroupId != CHANNEL_ID || message.sourceSubscriberId != TARGET_USER_ID) return;
+    if (message.type !== 'text/image_link') return;
+
+    const imageUrl = message.body;
+    
+    try {
+        const response = await fetch(imageUrl);
+        const buffer = Buffer.from(await response.arrayBuffer());
+
+        // 1. الفحص: هل هي صورة مهمة/سرقة؟
+        const isTrash = await isTrashImage(buffer);
+        
+        if (isTrash) {
+            console.log("⏭️ تجاهل الصورة: صورة مهمة أو سرقة.");
+            return;
+        }
+
+        // 2. إذا لم تكن صورة مهمة، فهي كابتشا! ابدأ بالحل
+        console.log("🛡️ كابتشا مكتشفة! جاري الحل...");
+        const code = await solveCaptcha(buffer);
+        
+        if (code) {
+            await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
+            console.log(`✅ تم الإرسال: #${code}`);
+        }
+    } catch (err) {
+        console.error("⚠️ خطأ في معالجة الصورة:", err.message);
+    }
+});
+
 async function solveCaptcha(buffer) {
+    // هذه الدالة ستبقى كما هي لأنها المتخصصة باستخراج النص داخل الكابتشا
     const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
     let minX = info.width, minY = info.height, maxX = 0, maxY = 0, found = false;
 
@@ -88,7 +94,8 @@ async function solveCaptcha(buffer) {
             }
         }
     }
-    if (!found) throw new Error("لم يتم العثور على الإطار الأصفر");
+    
+    if (!found) throw new Error("لا يوجد كابتشا في الصورة");
 
     const margin = 10;
     const processedBuffer = await sharp(buffer)
