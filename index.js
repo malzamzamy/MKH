@@ -1,34 +1,108 @@
 import 'dotenv/config';
 import wolfjs from 'wolf.js';
+import sharp from 'sharp';
+import { createWorker } from 'tesseract.js';
 
 const { WOLF } = wolfjs;
 const client = new WOLF();
 
-// تأكد من هذه الأرقام جيداً (هل هي نفس المستخدم ونفس المجموعة؟)
+// الإعدادات
 const TARGET_USER_ID = 51660277;
 const CHANNEL_ID = 81889058;
+const INTERVAL_MS = 63000; // 63 ثانية
 
 client.on('ready', async () => {
-    console.log("🚀 البوت متصل! سأطبع هنا أي رسالة تصلني...");
+    console.log("🚀 البوت متصل! جاهز للعمل (يتجاهل النصوص تماماً، يحلل الصور فقط)");
+    await client.group.joinById(CHANNEL_ID);
+    startAutomation();
 });
 
-client.on('groupMessage', async (message) => {
-    // 1. طباعة كل رسالة تصل للقناة (لنرى هل البوت يرى الرسائل أم لا)
-    console.log(`📩 رسالة جديدة من ID: ${message.sourceSubscriberId} في قناة: ${message.targetGroupId}`);
-    
-    // 2. التحقق من الشروط
-    if (message.sourceSubscriberId == TARGET_USER_ID && message.targetGroupId == CHANNEL_ID) {
-        console.log("✅ المستخدم والقناة مطابقين!");
-        
-        // التحقق من وجود مرفقات
-        if (message.attachments && message.attachments.length > 0) {
-            console.log("🖼️ تم العثور على صورة! الرابط هو:", message.attachments[0].link);
-        } else {
-            console.log("📝 هذه رسالة نصية فقط (سأتجاهلها).");
+// الأتمتة (تعمل كل 63 ثانية)
+async function startAutomation() {
+    setInterval(async () => {
+        try {
+            await client.messaging.sendGroupMessage(CHANNEL_ID, '!مد مهام');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            await client.messaging.sendGroupMessage(CHANNEL_ID, '!مد تحالف ايداع كل');
+        } catch (err) {
+            console.error("❌ خطأ في الأتمتة:", err.message);
         }
-    } else {
-        console.log("❌ الرسالة لا تخص المستخدم أو القناة المحددة.");
+    }, INTERVAL_MS);
+}
+
+// معالج الرسائل
+client.on('groupMessage', async (message) => {
+    // 1. فلتر المرسل والقناة
+    if (message.sourceSubscriberId != TARGET_USER_ID || message.targetGroupId != CHANNEL_ID) return;
+
+    // 2. الفلتر الصارم: إذا لم توجد مرفقات (صور)، تجاهل الرسالة فوراً
+    if (!message.attachments || message.attachments.length === 0) {
+        return; // خروج صامت (لا يسبب أخطاء)
+    }
+
+    // 3. الحصول على الرابط من المرفقات
+    const imageUrl = message.attachments[0].link;
+    if (!imageUrl) return;
+
+    try {
+        const response = await fetch(imageUrl);
+        const buffer = Buffer.from(await response.arrayBuffer());
+
+        // 4. فحص الصورة
+        const code = await solveCaptcha(buffer);
+        
+        if (code) {
+            await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
+            console.log(`✅ تم استخراج وإرسال الرمز: #${code}`);
+        }
+    } catch (err) {
+        // نتجاهل الأخطاء العادية (مثل عدم وجود إطار أصفر) ليبقى البوت صامتاً
+        if (err.message !== "لم يتم العثور على الإطار الأصفر") {
+            console.error("⚠️ خطأ في المعالجة:", err.message);
+        }
     }
 });
+
+// دالة الحل
+async function solveCaptcha(buffer) {
+    const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+    let minX = info.width, minY = info.height, maxX = 0, maxY = 0, found = false;
+
+    // البحث عن الإطار الأصفر
+    for (let y = 0; y < info.height; y++) {
+        for (let x = 0; x < info.width; x++) {
+            const idx = (y * info.width + x) * 4;
+            if (data[idx] > 200 && data[idx + 1] > 200 && data[idx + 2] < 100) {
+                minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+                found = true;
+            }
+        }
+    }
+    
+    if (!found) throw new Error("لم يتم العثور على الإطار الأصفر");
+
+    const margin = 10;
+    const processedBuffer = await sharp(buffer)
+        .extract({ 
+            left: minX + margin, 
+            top: minY + margin, 
+            width: (maxX - minX) - (margin * 2), 
+            height: (maxY - minY) - (margin * 2) 
+        })
+        .greyscale()
+        .normalize()
+        .linear(1.5, -0.2)
+        .sharpen()
+        .toBuffer();
+
+    const worker = await createWorker('eng+ara');
+    await worker.setParameters({ tessedit_pageseg_mode: '7' });
+    const { data: { text } } = await worker.recognize(processedBuffer);
+    await worker.terminate();
+
+    const result = text.replace(/[^a-zA-Z0-9\u0621-\u064A]/g, '').trim();
+    if (!result) throw new Error("لم يتم استخراج نص واضح");
+    return result;
+}
 
 client.login(process.env.U_MAIL, process.env.U_PASS);
