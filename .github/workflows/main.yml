@@ -11,10 +11,11 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v3
       with:
-        node-version: '20' # تم التحديث إلى نسخة 20
+        node-version: '20'
         
     - name: Install dependencies
-      run: npm ci # استخدام npm ci بدلاً من npm install لضمان تثبيت نظيف
+      # قمنا بتغيير npm ci إلى npm install
+      run: npm install
         
     - name: Run Bot
       run: npm start
