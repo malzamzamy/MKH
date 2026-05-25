@@ -8,7 +8,7 @@ const client = new WOLF();
 
 // الإعدادات المحددة
 const TARGET_USER_ID = 76023604;
-const CHANNEL_ID = 81889058;
+const CHANNEL_ID = 224;
 const INTERVAL_MS = 63000; // 63 ثانية
 
 client.on('ready', async () => {
