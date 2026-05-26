@@ -6,13 +6,12 @@ import { createWorker } from 'tesseract.js';
 const { WOLF } = wolfjs;
 const client = new WOLF();
 
-// المعرفات المحددة
 const TARGET_USER_ID = 51660277;
 const CHANNEL_ID = 81889058;
 const INTERVAL_MS = 63000;
 
 client.on('ready', async () => {
-    console.log("🚀 البوت متصل! سيتجاهل أي صورة تحتوي على كلمات (مهمة/سرقة).");
+    console.log("🚀 البوت متصل! يعتمد الآن على تحليل اللون الأحمر (بدون قراءة نصوص).");
     await client.group.joinById(CHANNEL_ID);
     startAutomation();
 });
@@ -29,24 +28,31 @@ async function startAutomation() {
     }, INTERVAL_MS);
 }
 
-// دالة الفلتر (القائمة السوداء)
-async function isTrashImage(buffer) {
-    try {
-        const worker = await createWorker('ara');
-        // قراءة كامل النص في الصورة
-        const { data: { text } } = await worker.recognize(buffer);
-        await worker.terminate();
+// دالة فحص نسبة اللون الأحمر
+async function isCaptchaByColor(buffer) {
+    const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+    
+    let redPixels = 0;
+    const totalPixels = info.width * info.height;
 
-        const cleanText = text.replace(/\s+/g, ''); // إزالة المسافات
-        
-        // إذا وجد البوت هذه الكلمات، فهي صورة غير مرغوبة
-        if (cleanText.includes('مهمةمكتملة') || cleanText.includes('عمليةسرقة') || cleanText.includes('ناجحة')) {
-            return true;
+    // المرور على كل بكسل في الصورة
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+
+        // شرط: إذا كان اللون أحمر داكن (خلفية الكابتشا)
+        // يمكنك تعديل الأرقام (120 مثلاً) إذا وجدت دقة أكبر
+        if (r > 120 && r > (g + 30) && r > (b + 30)) {
+            redPixels++;
         }
-        return false;
-    } catch (e) {
-        return false;
     }
+
+    const percentage = (redPixels / totalPixels) * 100;
+    console.log(`📊 نسبة اللون الأحمر في الصورة: ${percentage.toFixed(2)}%`);
+
+    // إذا كانت النسبة أعلى من 40% فهي كابتشا (يمكنك تعديل هذه النسبة)
+    return percentage > 40;
 }
 
 client.on('groupMessage', async (message) => {
@@ -59,16 +65,16 @@ client.on('groupMessage', async (message) => {
         const response = await fetch(imageUrl);
         const buffer = Buffer.from(await response.arrayBuffer());
 
-        // 1. الفحص: هل هي صورة مهمة/سرقة؟
-        const isTrash = await isTrashImage(buffer);
+        // 1. الفحص: هل هي صورة كابتشا (بناءً على اللون)؟
+        const isCaptcha = await isCaptchaByColor(buffer);
         
-        if (isTrash) {
-            console.log("⏭️ تجاهل الصورة: صورة مهمة أو سرقة.");
+        if (!isCaptcha) {
+            console.log("⏭️ تم تجاهل الصورة (نسبة اللون الأحمر منخفضة).");
             return;
         }
 
-        // 2. إذا لم تكن صورة مهمة، فهي كابتشا! ابدأ بالحل
-        console.log("🛡️ كابتشا مكتشفة! جاري الحل...");
+        // 2. إذا كانت كابتشا، نحللها
+        console.log("🛡️ كابتشا مكتشفة باللون! جاري الحل...");
         const code = await solveCaptcha(buffer);
         
         if (code) {
@@ -81,7 +87,7 @@ client.on('groupMessage', async (message) => {
 });
 
 async function solveCaptcha(buffer) {
-    // هذه الدالة ستبقى كما هي لأنها المتخصصة باستخراج النص داخل الكابتشا
+    // هذه الدالة ستبقى كما هي لأنها المتخصصة باستخراج النص
     const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
     let minX = info.width, minY = info.height, maxX = 0, maxY = 0, found = false;
 
@@ -95,7 +101,7 @@ async function solveCaptcha(buffer) {
         }
     }
     
-    if (!found) throw new Error("لا يوجد كابتشا في الصورة");
+    if (!found) throw new Error("لا يوجد إطار أصفر للحل");
 
     const margin = 10;
     const processedBuffer = await sharp(buffer)
