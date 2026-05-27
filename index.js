@@ -9,7 +9,7 @@ const client = new WOLF();
 // --- الإعدادات ---
 const TARGET_USER_ID = 76023604; // مُرسل الصور
 const CHANNEL_ID = 224;     // القناة
-const INTERVAL_MS = 63000;
+const INTERVAL_MS = 64000;
 const TARGET_PLAYER_NAME = 'cat'; // الاسم الذي تريد البوت أن يجاوب له فقط
 
 client.on('ready', async () => {
