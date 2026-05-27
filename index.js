@@ -6,13 +6,12 @@ import { createWorker } from 'tesseract.js';
 const { WOLF } = wolfjs;
 const client = new WOLF();
 
-// الإعدادات الأساسية
 const TARGET_USER_ID = 51660277;
 const CHANNEL_ID = 81889058;
 const INTERVAL_MS = 63000;
 
 client.on('ready', async () => {
-    console.log("🚀 البوت متصل ومستعد للعمل. يراقب القناة: " + CHANNEL_ID);
+    console.log("🚀 البوت متصل! يعتمد الآن على تحليل اللون الأحمر.");
     await client.group.joinById(CHANNEL_ID);
     startAutomation();
 });
@@ -29,53 +28,48 @@ async function startAutomation() {
     }, INTERVAL_MS);
 }
 
-// دالة فحص اللون الأحمر
+// دالة فحص نسبة اللون الأحمر
 async function isCaptchaByColor(buffer) {
     const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
-    
     let redPixels = 0;
     const totalPixels = info.width * info.height;
-
     for (let i = 0; i < data.length; i += 4) {
-        // فحص نسبة اللون الأحمر
-        if (data[i] > 120 && data[i] > (data[i + 1] + 30) && data[i] > (data[i + 2] + 30)) {
-            redPixels++;
-        }
+        if (data[i] > 120 && data[i] > (data[i + 1] + 30) && data[i] > (data[i + 2] + 30)) redPixels++;
     }
     const percentage = (redPixels / totalPixels) * 100;
-    return percentage > 30; // خفضنا النسبة قليلاً لتكون أكثر مرونة
+    return percentage > 40;
 }
 
-// دالة استخراج اسم اللاعب (مع معالجة صورة مكثفة لرفع دقة القراءة)
+// [تعديل] دالة استخراج اسم اللاعب باستخدام البحث عن النص بدلاً من الإحداثيات الثابتة
 async function extractPlayerName(buffer) {
     try {
-        const metadata = await sharp(buffer).metadata();
-        const { width, height } = metadata;
-
-        // القص بناءً على طلبك (70% يسار، 10% علوي، 25% عرض، 5% ارتفاع)
-        const crop = await sharp(buffer)
-            .extract({ 
-                left: Math.floor(width * 0.70), 
-                top: Math.floor(height * 0.10), 
-                width: Math.floor(width * 0.25), 
-                height: Math.floor(height * 0.05) 
-            })
+        // تحسين الصورة قبل قراءتها لرفع الدقة
+        const processedBuffer = await sharp(buffer)
             .greyscale()
-            .threshold(160) // تجعل الخلفية بيضاء والنص أسود واضح
+            .threshold(160) // تحويلها لأبيض وأسود نقي
             .toBuffer();
 
         const worker = await createWorker('ara+eng');
-        const { data: { text } } = await worker.recognize(crop);
+        const { data: { text } } = await worker.recognize(processedBuffer);
         await worker.terminate();
 
-        return text.replace(/[\n\r]/g, ' ').trim();
+        // استخدام Regex للبحث عن النص الذي يلي كلمة "اللاعب"
+        // هذا النمط يبحث عن "اللاعب" متبوعة بنقطتين أو مسافات، ثم يأخذ ما يليها
+        const match = text.match(/اللاعب[:\s]+([^\n\r]+)/u);
+        
+        if (match && match[1]) {
+            return match[1].trim();
+        }
+        
+        // إذا لم يجد الاسم، نطبع النص الخام للـ debugging
+        console.log("📝 النص المستخرج الخام:", text);
+        return "لم يتم العثور على اسم";
     } catch (e) {
-        return "غير قادر على القراءة";
+        return "خطأ في القراءة";
     }
 }
 
 client.on('groupMessage', async (message) => {
-    // الفلاتر
     if (message.targetGroupId != CHANNEL_ID || message.sourceSubscriberId != TARGET_USER_ID) return;
     if (message.type !== 'text/image_link') return;
 
@@ -85,19 +79,17 @@ client.on('groupMessage', async (message) => {
         const response = await fetch(imageUrl);
         const buffer = Buffer.from(await response.arrayBuffer());
 
-        // 1. التحقق من اللون
-        const isCaptcha = await isCaptchaByColor(buffer);
-        if (!isCaptcha) return;
+        if (!(await isCaptchaByColor(buffer))) return;
 
-        // 2. استخراج الاسم وطباعته
+        // استخراج الاسم
         const playerName = await extractPlayerName(buffer);
         console.log(`👤 اللاعب المكتشف: ${playerName}`);
-
-        // 3. حل الكابتشا
+        
+        // حل الكابتشا
         const code = await solveCaptcha(buffer);
         if (code) {
             await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
-            console.log(`✅ تم إرسال الرمز: #${code} للاعب: ${playerName}`);
+            console.log(`✅ تم الإرسال: #${code}`);
         }
     } catch (err) {
         console.error("⚠️ خطأ في المعالجة:", err.message);
@@ -118,7 +110,7 @@ async function solveCaptcha(buffer) {
         }
     }
     
-    if (!found) return null;
+    if (!found) throw new Error("لا يوجد إطار أصفر للحل");
 
     const margin = 10;
     const processedBuffer = await sharp(buffer)
