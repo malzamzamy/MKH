@@ -6,14 +6,11 @@ import { createWorker } from 'tesseract.js';
 const { WOLF } = wolfjs;
 const client = new WOLF();
 
-// --- الإعدادات ---
-const CHANNEL_ID = 81889058;    // القناة المطلوبة
-const BOT_ID = 51660277;        // عضوية البوت (لمنع التداخل)
+const CHANNEL_ID = 81889058;
 const INTERVAL_MS = 63000;
 
 client.on('ready', async () => {
-    console.log(`🚀 البوت متصل! (ID: ${BOT_ID})`);
-    console.log(`📡 يعمل في القناة: ${CHANNEL_ID}`);
+    console.log("🚀 البوت متصل! جاهز لتحليل اسم اللاعب واستخراج الكابتشا.");
     await client.group.joinById(CHANNEL_ID);
     startAutomation();
 });
@@ -30,26 +27,27 @@ async function startAutomation() {
     }, INTERVAL_MS);
 }
 
-// دالة فحص اللون (للتأكد أنها كابتشا)
+// 1. دالة فحص اللون (للتأكد أنها كابتشا)
 async function isCaptchaByColor(buffer) {
     const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
     let redPixels = 0;
     const totalPixels = info.width * info.height;
     for (let i = 0; i < data.length; i += 4) {
-        // فحص اللون الأحمر
         if (data[i] > 120 && data[i] > (data[i + 1] + 30) && data[i] > (data[i + 2] + 30)) redPixels++;
     }
     const percentage = (redPixels / totalPixels) * 100;
     return percentage > 40;
 }
 
-// دالة استخراج اسم اللاعب
+// 2. دالة استخراج اسم اللاعب بالإحداثيات التي طلبتها
 async function extractPlayerName(buffer) {
     try {
         const metadata = await sharp(buffer).metadata();
         const { width, height } = metadata;
-        
-        // القص بناءً على الإحداثيات المطلوبة
+
+        // الإحداثيات بناءً على نسبك:
+        // Left 70%, Top 10%
+        // العرض المتبقي (25%)، الارتفاع المتبقي (5%)
         const extractOptions = {
             left: Math.floor(width * 0.70),
             top: Math.floor(height * 0.10),
@@ -66,6 +64,7 @@ async function extractPlayerName(buffer) {
         const worker = await createWorker('ara+eng');
         const { data: { text } } = await worker.recognize(croppedBuffer);
         await worker.terminate();
+
         return text.trim();
     } catch (e) {
         return "غير معروف";
@@ -73,37 +72,33 @@ async function extractPlayerName(buffer) {
 }
 
 client.on('groupMessage', async (message) => {
-    // فلتر القناة
-    if (message.targetGroupId != CHANNEL_ID) return;
+    if (message.targetGroupId != CHANNEL_ID || message.type !== 'text/image_link') return;
+
+    const imageUrl = message.body;
     
-    // منع البوت من التفاعل مع رسائله الخاصة
-    if (message.sourceSubscriberId == BOT_ID) return;
+    try {
+        const response = await fetch(imageUrl);
+        const buffer = Buffer.from(await response.arrayBuffer());
 
-    // معالجة الصور فقط
-    if (message.type === 'text/image_link') {
-        const imageUrl = message.body;
+        // التحقق من أنها كابتشا
+        const isCaptcha = await isCaptchaByColor(buffer);
+        if (!isCaptcha) return;
+
+        // استخراج اسم اللاعب وطباعته
+        const playerName = await extractPlayerName(buffer);
+        console.log(`👤 اسم اللاعب في البطاقة: ${playerName}`);
         
-        try {
-            const response = await fetch(imageUrl);
-            const buffer = Buffer.from(await response.arrayBuffer());
+        // يمكنك إرسال اسم اللاعب للقناة إذا أردت:
+        // await client.messaging.sendGroupMessage(CHANNEL_ID, `اللاعب: ${playerName}`);
 
-            // 1. التحقق من أنها كابتشا
-            const isCaptcha = await isCaptchaByColor(buffer);
-            if (!isCaptcha) return;
-
-            // 2. استخراج الاسم وطباعته في الكونسول
-            const playerName = await extractPlayerName(buffer);
-            console.log(`👤 اسم اللاعب في البطاقة: ${playerName}`);
-            
-            // 3. حل الكابتشا
-            const code = await solveCaptcha(buffer);
-            if (code) {
-                await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
-                console.log(`✅ تم الإرسال: #${code}`);
-            }
-        } catch (err) {
-            console.error("⚠️ خطأ في المعالجة:", err.message);
+        // حل الكابتشا
+        const code = await solveCaptcha(buffer);
+        if (code) {
+            await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
+            console.log(`✅ تم إرسال الرمز: #${code}`);
         }
+    } catch (err) {
+        console.error("⚠️ خطأ:", err.message);
     }
 });
 
