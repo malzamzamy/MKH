@@ -6,19 +6,17 @@ import { createWorker } from 'tesseract.js';
 const { WOLF } = wolfjs;
 const client = new WOLF();
 
-// --- الإعدادات ---
-const CHANNEL_ID = 81889058;    // القناة المستهدفة
-const BOT_ID = 51660277;        // عضوية البوت (لمنع التفاعل مع رسائل البوت نفسه)
-const INTERVAL_MS = 63000;      // وقت المهام التلقائية
+// الإعدادات الأساسية
+const TARGET_USER_ID = 51660277;
+const CHANNEL_ID = 81889058;
+const INTERVAL_MS = 63000;
 
 client.on('ready', async () => {
-    console.log(`🚀 البوت متصل ومستعد!`);
-    console.log(`📡 يراقب القناة: ${CHANNEL_ID}`);
+    console.log("🚀 البوت متصل ومستعد للعمل. يراقب القناة: " + CHANNEL_ID);
     await client.group.joinById(CHANNEL_ID);
     startAutomation();
 });
 
-// دالة المهام التلقائية
 async function startAutomation() {
     setInterval(async () => {
         try {
@@ -31,50 +29,81 @@ async function startAutomation() {
     }, INTERVAL_MS);
 }
 
-// 1. دالة فحص اللون (للتأكد أنها كابتشا) - تعتمد على كثافة اللون الأحمر
+// دالة فحص اللون الأحمر
 async function isCaptchaByColor(buffer) {
     const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+    
     let redPixels = 0;
     const totalPixels = info.width * info.height;
+
     for (let i = 0; i < data.length; i += 4) {
-        if (data[i] > 120 && data[i] > (data[i + 1] + 30) && data[i] > (data[i + 2] + 30)) redPixels++;
+        // فحص نسبة اللون الأحمر
+        if (data[i] > 120 && data[i] > (data[i + 1] + 30) && data[i] > (data[i + 2] + 30)) {
+            redPixels++;
+        }
     }
     const percentage = (redPixels / totalPixels) * 100;
-    return percentage > 40;
+    return percentage > 30; // خفضنا النسبة قليلاً لتكون أكثر مرونة
 }
 
-// 2. دالة استخراج اسم اللاعب (مع الإحداثيات المصححة)
+// دالة استخراج اسم اللاعب (مع معالجة صورة مكثفة لرفع دقة القراءة)
 async function extractPlayerName(buffer) {
     try {
         const metadata = await sharp(buffer).metadata();
         const { width, height } = metadata;
-        
-        // الإحداثيات المصححة للتركيز على سطر اسم اللاعب فقط
-        const extractOptions = {
-            left: Math.floor(width * 0.70),
-            top: Math.floor(height * 0.05),
-            width: Math.floor(width * 0.25),
-            height: Math.floor(height * 0.03)
-        };
 
-        const croppedBuffer = await sharp(buffer)
-            .extract(extractOptions)
+        // القص بناءً على طلبك (70% يسار، 10% علوي، 25% عرض، 5% ارتفاع)
+        const crop = await sharp(buffer)
+            .extract({ 
+                left: Math.floor(width * 0.70), 
+                top: Math.floor(height * 0.10), 
+                width: Math.floor(width * 0.25), 
+                height: Math.floor(height * 0.05) 
+            })
             .greyscale()
-            .threshold(180)
+            .threshold(160) // تجعل الخلفية بيضاء والنص أسود واضح
             .toBuffer();
 
         const worker = await createWorker('ara+eng');
-        const { data: { text } } = await worker.recognize(croppedBuffer);
+        const { data: { text } } = await worker.recognize(crop);
         await worker.terminate();
 
-        // تنظيف النص
-        return text.replace(/[^a-zA-Z0-9\u0621-\u064A]/g, ' ').trim() || "غير معروف";
+        return text.replace(/[\n\r]/g, ' ').trim();
     } catch (e) {
-        return "خطأ في القراءة";
+        return "غير قادر على القراءة";
     }
 }
 
-// 3. دالة حل الكابتشا (تعتمد على الإطار الأصفر)
+client.on('groupMessage', async (message) => {
+    // الفلاتر
+    if (message.targetGroupId != CHANNEL_ID || message.sourceSubscriberId != TARGET_USER_ID) return;
+    if (message.type !== 'text/image_link') return;
+
+    const imageUrl = message.body;
+    
+    try {
+        const response = await fetch(imageUrl);
+        const buffer = Buffer.from(await response.arrayBuffer());
+
+        // 1. التحقق من اللون
+        const isCaptcha = await isCaptchaByColor(buffer);
+        if (!isCaptcha) return;
+
+        // 2. استخراج الاسم وطباعته
+        const playerName = await extractPlayerName(buffer);
+        console.log(`👤 اللاعب المكتشف: ${playerName}`);
+
+        // 3. حل الكابتشا
+        const code = await solveCaptcha(buffer);
+        if (code) {
+            await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
+            console.log(`✅ تم إرسال الرمز: #${code} للاعب: ${playerName}`);
+        }
+    } catch (err) {
+        console.error("⚠️ خطأ في المعالجة:", err.message);
+    }
+});
+
 async function solveCaptcha(buffer) {
     const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
     let minX = info.width, minY = info.height, maxX = 0, maxY = 0, found = false;
@@ -88,6 +117,7 @@ async function solveCaptcha(buffer) {
             }
         }
     }
+    
     if (!found) return null;
 
     const margin = 10;
@@ -106,37 +136,5 @@ async function solveCaptcha(buffer) {
 
     return text.replace(/[^a-zA-Z0-9\u0621-\u064A]/g, '').trim();
 }
-
-// الاستماع للرسائل
-client.on('groupMessage', async (message) => {
-    // 1. الفلاتر الأساسية: القناة، المرسل، والنوع
-    if (message.targetGroupId != CHANNEL_ID) return;
-    if (message.sourceSubscriberId == BOT_ID) return; // منع التفاعل مع رسائل البوت نفسه
-    if (message.type !== 'text/image_link') return;
-
-    const imageUrl = message.body;
-    
-    try {
-        const response = await fetch(imageUrl);
-        const buffer = Buffer.from(await response.arrayBuffer());
-
-        // 2. التحقق من أنها كابتشا (باللون)
-        const isCaptcha = await isCaptchaByColor(buffer);
-        if (!isCaptcha) return;
-
-        // 3. استخراج الاسم وطباعته
-        const playerName = await extractPlayerName(buffer);
-        console.log(`👤 اسم اللاعب في البطاقة: ${playerName}`);
-        
-        // 4. حل الكابتشا وإرسالها
-        const code = await solveCaptcha(buffer);
-        if (code) {
-            await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
-            console.log(`✅ تم إرسال الرمز: #${code}`);
-        }
-    } catch (err) {
-        console.error("⚠️ خطأ في المعالجة:", err.message);
-    }
-});
 
 client.login(process.env.U_MAIL, process.env.U_PASS);
