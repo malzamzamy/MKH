@@ -23,7 +23,7 @@ async function startAutomation() {
     const runTask = async () => {
         try {
             // 1. انتظار ثانية واحدة قبل البدء
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 3000));
 
             // 2. إرسال أمر المهام
             await client.messaging.sendGroupMessage(CHANNEL_ID, '!مد مهام');
