@@ -7,9 +7,9 @@ const { WOLF } = wolfjs;
 const client = new WOLF();
 
 // --- الإعدادات ---
-const TARGET_USER_ID = 76023604; // مُرسل الصور
-const CHANNEL_ID = 224;     // القناة
-const INTERVAL_MS = 64000;
+const TARGET_USER_ID = 76023213; // مُرسل الصور
+const CHANNEL_ID = 18432094;     // القناة
+const DELAY_MS = 63000;  
 const TARGET_PLAYER_NAME = 'cat'; // الاسم الذي تريد البوت أن يجاوب له فقط
 
 client.on('ready', async () => {
@@ -22,7 +22,6 @@ client.on('ready', async () => {
 async function startAutomation() {
     // نحدد وقت الانتظار هنا (66000 ميللي ثانية = 66 ثانية)
     // أضفنا 3 ثوانٍ إضافية لحل مشكلة التقديم التي تواجهها
-    const DELAY_MS = 63000; 
 
     async function runTask() {
         try {
