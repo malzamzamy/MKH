@@ -1,4 +1,4 @@
-name: XO Bot Runner
+name: MKH Bot Runner
 
 on:
   push:
