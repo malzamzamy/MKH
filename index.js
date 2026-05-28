@@ -2,154 +2,515 @@ import 'dotenv/config';
 import wolfjs from 'wolf.js';
 import sharp from 'sharp';
 import { createWorker } from 'tesseract.js';
+import fetch from 'node-fetch';
 
 const { WOLF } = wolfjs;
 const client = new WOLF();
 
-// --- الإعدادات ---
-const TARGET_USER_ID = 76023604 ; // مُرسل الصور
-const CHANNEL_ID = 224 ;     // القناة
-const DELAY_MS = 63000;  
-const TARGET_PLAYER_NAME = 'cat'; // الاسم الذي تريد البوت أن يجاوب له فقط
+// ========================================
+// الإعدادات
+// ========================================
 
-client.on('ready', async () => {
-    console.log(`🚀 البوت متصل! سأجاوب فقط إذا كان اسم اللاعب يحتوي على: ${TARGET_PLAYER_NAME}`);
-    await client.group.joinById(CHANNEL_ID);
-    startAutomation();
+const TARGET_USER_ID = 84520028;
+const CHANNEL_ID = 569;
+
+const TARGET_PLAYER_NAME = 'SA';
+
+// كل 5 دقائق
+const TASK_DELAY = 300000;
+
+let lastSolved = '';
+let solving = false;
+
+// ========================================
+// OCR WORKER
+// ========================================
+
+const worker = await createWorker('eng+ara');
+
+await worker.setParameters({
+    tessedit_pageseg_mode: '7',
+    preserve_interword_spaces: '0',
 });
 
+// ========================================
+// READY
+// ========================================
+
+client.on('ready', async () => {
+
+    console.log(`🚀 البوت متصل`);
+    console.log(`🎯 فلترة الاسم: ${TARGET_PLAYER_NAME}`);
+
+    try {
+
+        await client.group.joinById(CHANNEL_ID);
+
+        console.log(`✅ دخل القناة`);
+
+        startAutomation();
+
+    } catch (err) {
+
+        console.error('❌ خطأ بالدخول:', err.message);
+
+    }
+
+});
+
+// ========================================
+// AUTOMATION
+// ========================================
+
 async function startAutomation() {
-    // دالة تقوم بتنفيذ الخطوات بالترتيب
+
     const runTask = async () => {
+
         try {
-            // 1. انتظار ثانية واحدة قبل البدء
-            await new Promise(resolve => setTimeout(resolve, 3000));
 
-            // 2. إرسال أمر المهام
-            await client.messaging.sendGroupMessage(CHANNEL_ID, '!مد مهام');
-            console.log("✅ تم إرسال !مد مهام");
+            // ========================================
+            // !مد مهام
+            // ========================================
 
-            // 3. انتظار ثانيتين
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await client.messaging.sendGroupMessage(
+                CHANNEL_ID,
+                '!مد مهام'
+            );
 
-            // 4. إرسال أمر الإيداع
-            await client.messaging.sendGroupMessage(CHANNEL_ID, '!مد تحالف ايداع كل');
-            console.log("✅ تم إرسال !مد تحالف ايداع كل");
+            console.log('✅ تم إرسال !مد مهام');
+
+            await wait(2000);
+
+            // ========================================
+            // !مد صندوق فتح
+            // ========================================
+
+            await client.messaging.sendGroupMessage(
+                CHANNEL_ID,
+                '!مد صندوق فتح'
+            );
+
+            console.log('✅ تم إرسال !مد صندوق فتح');
+
+            await wait(2000);
+
+            // ========================================
+            // !مد صندوق ايداع كل
+            // ========================================
+
+            await client.messaging.sendGroupMessage(
+                CHANNEL_ID,
+                '!مد صندوق ايداع كل'
+            );
+
+            console.log('✅ تم إرسال !مد صندوق ايداع كل');
 
         } catch (err) {
-            console.error("❌ خطأ في الأتمتة:", err.message);
+
+            console.error('❌ خطأ بالأتمتة:', err.message);
+
         }
 
-        // 5. انتظار 63 ثانية ثم إعادة تشغيل الدالة بالكامل
-        console.log("⏳ بانتظار 63 ثانية للبدء من جديد...");
-        setTimeout(runTask, 306000);
+        console.log('⏳ انتظار 5 دقائق...');
+
+        setTimeout(runTask, TASK_DELAY);
     };
 
-    // تشغيل أول دورة
     runTask();
 }
 
-
-
-// دالة فحص نسبة اللون الأحمر
-async function isCaptchaByColor(buffer) {
-    const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
-    let redPixels = 0;
-    const totalPixels = info.width * info.height;
-    for (let i = 0; i < data.length; i += 4) {
-        if (data[i] > 120 && data[i] > (data[i + 1] + 30) && data[i] > (data[i + 2] + 30)) redPixels++;
-    }
-    const percentage = (redPixels / totalPixels) * 100;
-    return percentage > 40;
-}
-
-// دالة استخراج اسم اللاعب
-async function extractPlayerName(buffer) {
-    try {
-        const processedBuffer = await sharp(buffer)
-            .greyscale()
-            .threshold(160) 
-            .toBuffer();
-
-        const worker = await createWorker('ara+eng');
-        const { data: { text } } = await worker.recognize(processedBuffer);
-        await worker.terminate();
-
-        const match = text.match(/اللاعب[:\s]+([^\n\r]+)/u);
-        return match ? match[1].trim() : "لم يتم العثور على اسم";
-    } catch (e) {
-        return "خطأ في القراءة";
-    }
-}
+// ========================================
+// EVENTS
+// ========================================
 
 client.on('groupMessage', async (message) => {
-    if (message.targetGroupId != CHANNEL_ID || message.sourceSubscriberId != TARGET_USER_ID) return;
-    if (message.type !== 'text/image_link') return;
 
-    const imageUrl = message.body;
-    
     try {
+
+        // ========================================
+        // فلترة الرسائل
+        // ========================================
+
+        if (message.targetGroupId != CHANNEL_ID) return;
+
+        if (message.sourceSubscriberId != TARGET_USER_ID) return;
+
+        if (message.type !== 'text/image_link') return;
+
+        if (solving) return;
+
+        solving = true;
+
+        const imageUrl = message.body;
+
+        console.log('🖼️ تم استلام صورة');
+
+        // ========================================
+        // تحميل الصورة
+        // ========================================
+
         const response = await fetch(imageUrl);
+
         const buffer = Buffer.from(await response.arrayBuffer());
 
-        // 1. الفحص: هل هي صورة كابتشا؟
-        if (!(await isCaptchaByColor(buffer))) return;
+        // ========================================
+        // فحص الكابتشا
+        // ========================================
 
-        // 2. استخراج الاسم
-        const playerName = extractPlayerName(buffer); // (سأقوم بانتظارها في السطر التالي)
-        const name = await playerName;
-        console.log(`👤 اللاعب المكتشف: ${name}`);
+        const isCaptcha = await isCaptchaByColor(buffer);
 
-        // 3. فلتر اسم اللاعب (الشرط الجديد)
-        if (!name.toLowerCase().includes(TARGET_PLAYER_NAME.toLowerCase())) {
-            console.log(`⏭️ تم تجاهل البطاقة: الاسم "${name}" لا يطابق المطلوب.`);
+        if (!isCaptcha) {
+
+            solving = false;
+            return;
+
+        }
+
+        console.log('✅ تم اكتشاف كابتشا');
+
+        // ========================================
+        // استخراج اسم اللاعب
+        // ========================================
+
+        const playerName = await extractPlayerName(buffer);
+
+        console.log(`👤 اللاعب: ${playerName}`);
+
+        // ========================================
+        // فلترة الاسم
+        // ========================================
+
+        if (
+            !playerName
+                .toLowerCase()
+                .includes(TARGET_PLAYER_NAME.toLowerCase())
+        ) {
+
+            console.log('⏭️ الاسم غير مطابق');
+
+            solving = false;
             return;
         }
 
-        // 4. إذا تطابق الاسم، نحل الكابتشا
-        console.log(`✅ الاسم يطابق (${name})، جاري حل الكابتشا...`);
+        console.log('✅ الاسم مطابق');
+
+        // ========================================
+        // حل الكابتشا
+        // ========================================
+
         const code = await solveCaptcha(buffer);
-        
-        if (code) {
-            await client.messaging.sendGroupMessage(CHANNEL_ID, `#${code}`);
-            console.log(`✅ تم الإرسال: #${code}`);
+
+        if (!code) {
+
+            console.log('❌ فشل استخراج الكود');
+
+            solving = false;
+            return;
         }
+
+        // ========================================
+        // منع التكرار
+        // ========================================
+
+        if (code === lastSolved) {
+
+            console.log('⏭️ تم تجاهل كود مكرر');
+
+            solving = false;
+            return;
+        }
+
+        lastSolved = code;
+
+        // ========================================
+        // إرسال الحل
+        // ========================================
+
+        await client.messaging.sendGroupMessage(
+            CHANNEL_ID,
+            `#${code}`
+        );
+
+        console.log(`✅ تم إرسال الحل: #${code}`);
+
+        // ========================================
+        // إعادة السماح بعد ثواني
+        // ========================================
+
+        setTimeout(() => {
+
+            lastSolved = '';
+
+        }, 15000);
+
     } catch (err) {
-        console.error("⚠️ خطأ في المعالجة:", err.message);
+
+        console.error('⚠️ خطأ:', err.message);
+
     }
+
+    solving = false;
+
 });
 
+// ========================================
+// كشف صورة التحقق
+// ========================================
+
+async function isCaptchaByColor(buffer) {
+
+    const {
+        data,
+        info
+    } = await sharp(buffer)
+        .raw()
+        .ensureAlpha()
+        .toBuffer({ resolveWithObject: true });
+
+    let yellowPixels = 0;
+
+    const totalPixels = info.width * info.height;
+
+    for (let i = 0; i < data.length; i += 4) {
+
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+
+        if (
+            r > 170 &&
+            g > 170 &&
+            b < 140
+        ) {
+
+            yellowPixels++;
+
+        }
+    }
+
+    const percentage =
+        (yellowPixels / totalPixels) * 100;
+
+    return percentage > 1.2;
+}
+
+// ========================================
+// استخراج اسم اللاعب
+// ========================================
+
+async function extractPlayerName(buffer) {
+
+    try {
+
+        const processed = await sharp(buffer)
+
+            .greyscale()
+
+            .normalize()
+
+            .resize({ width: 1400 })
+
+            .sharpen()
+
+            .threshold(150)
+
+            .toBuffer();
+
+        const {
+            data: { text }
+        } = await worker.recognize(processed);
+
+        const clean = text
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        console.log('📄 OCR TEXT:', clean);
+
+        const match = clean.match(
+            /اللاعب[:\s]+([^\n\r]+)/u
+        );
+
+        if (!match) return '';
+
+        return match[1]
+            .replace(/[^\u0621-\u064Aa-zA-Z0-9_ ]/g, '')
+            .trim();
+
+    } catch (err) {
+
+        console.log('❌ خطأ قراءة الاسم');
+
+        return '';
+
+    }
+}
+
+// ========================================
+// حل الكابتشا
+// ========================================
+
 async function solveCaptcha(buffer) {
-    const { data, info } = await sharp(buffer).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
-    let minX = info.width, minY = info.height, maxX = 0, maxY = 0, found = false;
+
+    const {
+        data,
+        info
+    } = await sharp(buffer)
+        .raw()
+        .ensureAlpha()
+        .toBuffer({ resolveWithObject: true });
+
+    let minX = info.width;
+    let minY = info.height;
+    let maxX = 0;
+    let maxY = 0;
+
+    let found = false;
+
+    // ========================================
+    // اكتشاف الإطار الأصفر
+    // ========================================
 
     for (let y = 0; y < info.height; y++) {
+
         for (let x = 0; x < info.width; x++) {
+
             const idx = (y * info.width + x) * 4;
-            if (data[idx] > 200 && data[idx + 1] > 200 && data[idx + 2] < 100) {
-                minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+
+            if (
+                r > 180 &&
+                g > 180 &&
+                b < 120
+            ) {
+
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+
                 found = true;
             }
         }
     }
-    
-    if (!found) throw new Error("لا يوجد إطار أصفر للحل");
 
-    const margin = 10;
-    const processedBuffer = await sharp(buffer)
-        .extract({ left: minX + margin, top: minY + margin, width: (maxX - minX) - (margin * 2), height: (maxY - minY) - (margin * 2) })
+    if (!found) {
+
+        console.log('❌ لم يتم اكتشاف الإطار');
+
+        return null;
+    }
+
+    // ========================================
+    // قص المنطقة
+    // ========================================
+
+    const margin = 15;
+
+    const width = maxX - minX - margin * 2;
+    const height = maxY - minY - margin * 2;
+
+    if (width <= 0 || height <= 0) {
+
+        console.log('❌ أبعاد غير صالحة');
+
+        return null;
+    }
+
+    // ========================================
+    // تحسين الصورة
+    // ========================================
+
+    const processed = await sharp(buffer)
+
+        .extract({
+            left: minX + margin,
+            top: minY + margin,
+            width,
+            height
+        })
+
+        .resize({
+            width: width * 4
+        })
+
         .greyscale()
+
         .normalize()
-        .linear(1.5, -0.2)
+
+        .modulate({
+            brightness: 1.2
+        })
+
         .sharpen()
+
+        .threshold(145)
+
+        .png()
+
         .toBuffer();
 
-    const worker = await createWorker('eng+ara');
-    await worker.setParameters({ tessedit_pageseg_mode: '7' });
-    const { data: { text } } = await worker.recognize(processedBuffer);
-    await worker.terminate();
+    // ========================================
+    // OCR
+    // ========================================
 
-    return text.replace(/[^a-zA-Z0-9\u0621-\u064A]/g, '').trim();
+    const {
+        data: { text }
+    } = await worker.recognize(processed);
+
+    console.log('🔍 النص الخام:', text);
+
+    // ========================================
+    // تنظيف الناتج
+    // ========================================
+
+    let result = text
+
+        .replace(/\s/g, '')
+
+        .replace(/[^a-zA-Z0-9\u0621-\u064A]/g, '')
+
+        .trim();
+
+    // ========================================
+    // تحسينات شائعة
+    // ========================================
+
+    result = result
+
+        .replace(/O/g, '0')
+        .replace(/I/g, '1')
+        .replace(/l/g, '1');
+
+    if (result.length < 2) {
+
+        return null;
+    }
+
+    return result;
 }
 
-client.login(process.env.U_MAIL, process.env.U_PASS);
+// ========================================
+// أدوات مساعدة
+// ========================================
+
+function wait(ms) {
+
+    return new Promise(resolve => {
+
+        setTimeout(resolve, ms);
+
+    });
+}
+
+// ========================================
+// LOGIN
+// ========================================
+
+client.login(
+    process.env.U_MAIL,
+    process.env.U_PASS
+);
